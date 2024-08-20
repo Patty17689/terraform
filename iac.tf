@@ -4,6 +4,6 @@ provider "aws" {
 }
 
 # Create an S3 bucket
-resource "aws_s3_bucket" "patdemo" {
-  bucket = "patdemo"
+resource "aws_s3_bucket" "patdemo123" {
+  bucket = "patdemo123"
 }
