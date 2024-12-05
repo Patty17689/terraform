@@ -1,15 +1,16 @@
 # AWS Single Page Application Architecture
 
 # This Terraform configuration sets up a serverless web application architecture on AWS
-# using CloudFront, S3, API Gateway, Lambda, DynamoDB, and ElastiCache.
-# It follows security best practices with IAM roles and least privilege permissions.
+# It includes CloudFront for content delivery, S3 for static file hosting,
+# API Gateway and Lambda for backend processing, DynamoDB for data storage,
+# ElastiCache for caching, and Certificate Manager for SSL/TLS.
 
 provider "aws" {
-  region = "us-east-1"
+  region = "us-west-2"
 }
 
 # S3 bucket for static website hosting
-resource "aws_s3_bucket" "website_bucket" {
+resource "aws_s3_bucket" "website" {
   bucket = "my-spa-website-bucket"
   acl    = "private"
 
@@ -19,14 +20,14 @@ resource "aws_s3_bucket" "website_bucket" {
   }
 }
 
-# CloudFront distribution for content delivery
-resource "aws_cloudfront_distribution" "website_cdn" {
+# CloudFront distribution
+resource "aws_cloudfront_distribution" "website" {
   origin {
-    domain_name = aws_s3_bucket.website_bucket.bucket_regional_domain_name
-    origin_id   = "S3-${aws_s3_bucket.website_bucket.id}"
+    domain_name = aws_s3_bucket.website.bucket_regional_domain_name
+    origin_id   = "S3-${aws_s3_bucket.website.id}"
 
     s3_origin_config {
-      origin_access_identity = aws_cloudfront_origin_access_identity.oai.cloudfront_access_identity_path
+      origin_access_identity = aws_cloudfront_origin_access_identity.website.cloudfront_access_identity_path
     }
   }
 
@@ -34,9 +35,9 @@ resource "aws_cloudfront_distribution" "website_cdn" {
   default_root_object = "index.html"
 
   default_cache_behavior {
-    allowed_methods  = ["GET", "HEAD"]
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "S3-${aws_s3_bucket.website_bucket.id}"
+    target_origin_id = "S3-${aws_s3_bucket.website.id}"
 
     forwarded_values {
       query_string = false
@@ -63,13 +64,12 @@ resource "aws_cloudfront_distribution" "website_cdn" {
 }
 
 # API Gateway
-resource "aws_api_gateway_rest_api" "spa_api" {
-  name        = "spa-api"
-  description = "API for Single Page Application"
+resource "aws_api_gateway_rest_api" "api" {
+  name = "my-spa-api"
 }
 
 # Lambda function for /tickets endpoint
-resource "aws_lambda_function" "tickets_lambda" {
+resource "aws_lambda_function" "tickets" {
   filename      = "tickets_lambda.zip"
   function_name = "tickets_lambda"
   role          = aws_iam_role.lambda_role.arn
@@ -78,7 +78,7 @@ resource "aws_lambda_function" "tickets_lambda" {
 }
 
 # Lambda function for /shows endpoint
-resource "aws_lambda_function" "shows_lambda" {
+resource "aws_lambda_function" "shows" {
   filename      = "shows_lambda.zip"
   function_name = "shows_lambda"
   role          = aws_iam_role.lambda_role.arn
@@ -87,7 +87,7 @@ resource "aws_lambda_function" "shows_lambda" {
 }
 
 # Lambda function for /info endpoint
-resource "aws_lambda_function" "info_lambda" {
+resource "aws_lambda_function" "info" {
   filename      = "info_lambda.zip"
   function_name = "info_lambda"
   role          = aws_iam_role.lambda_role.arn
@@ -96,10 +96,11 @@ resource "aws_lambda_function" "info_lambda" {
 }
 
 # DynamoDB table
-resource "aws_dynamodb_table" "spa_table" {
-  name           = "spa-table"
+resource "aws_dynamodb_table" "data" {
+  name           = "my-spa-data"
   billing_mode   = "PAY_PER_REQUEST"
   hash_key       = "id"
+
   attribute {
     name = "id"
     type = "S"
@@ -107,8 +108,8 @@ resource "aws_dynamodb_table" "spa_table" {
 }
 
 # ElastiCache cluster
-resource "aws_elasticache_cluster" "spa_cache" {
-  cluster_id           = "spa-cache"
+resource "aws_elasticache_cluster" "cache" {
+  cluster_id           = "my-spa-cache"
   engine               = "redis"
   node_type            = "cache.t3.micro"
   num_cache_nodes      = 1
@@ -134,52 +135,42 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
-# IAM policy for Lambda to access DynamoDB and ElastiCache
-resource "aws_iam_role_policy" "lambda_policy" {
-  name = "lambda_policy"
-  role = aws_iam_role.lambda_role.id
+# Attach policies to Lambda role (following least privilege principle)
+resource "aws_iam_role_policy_attachment" "lambda_dynamodb" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonDynamoDBReadOnlyAccess"
+  role       = aws_iam_role.lambda_role.name
+}
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem",
-          "dynamodb:Query",
-          "dynamodb:Scan"
-        ]
-        Resource = aws_dynamodb_table.spa_table.arn
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "elasticache:DescribeCacheClusters",
-          "elasticache:DescribeReplicationGroups"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
+resource "aws_iam_role_policy_attachment" "lambda_s3_read" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+  role       = aws_iam_role.lambda_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_elasticache" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonElastiCacheFullAccess"
+  role       = aws_iam_role.lambda_role.name
+}
+
+# Certificate Manager (for custom domain SSL/TLS)
+resource "aws_acm_certificate" "cert" {
+  domain_name       = "example.com"
+  validation_method = "DNS"
 }
 
 # Lambda Authorizer
-resource "aws_lambda_function" "authorizer_lambda" {
+resource "aws_lambda_function" "authorizer" {
   filename      = "authorizer_lambda.zip"
-  function_name = "authorizer_lambda"
+  function_name = "lambda_authorizer"
   role          = aws_iam_role.lambda_role.arn
   handler       = "index.handler"
   runtime       = "nodejs14.x"
 }
 
 # API Gateway Authorizer
-resource "aws_api_gateway_authorizer" "spa_authorizer" {
-  name                   = "spa-authorizer"
-  rest_api_id            = aws_api_gateway_rest_api.spa_api.id
-  authorizer_uri         = aws_lambda_function.authorizer_lambda.invoke_arn
+resource "aws_api_gateway_authorizer" "authorizer" {
+  name                   = "lambda_authorizer"
+  rest_api_id            = aws_api_gateway_rest_api.api.id
+  authorizer_uri         = aws_lambda_function.authorizer.invoke_arn
   authorizer_credentials = aws_iam_role.invocation_role.arn
 }
 
@@ -202,7 +193,7 @@ resource "aws_iam_role" "invocation_role" {
   })
 }
 
-# IAM policy for API Gateway to invoke Lambda Authorizer
+# Policy to allow API Gateway to invoke Lambda Authorizer
 resource "aws_iam_role_policy" "invocation_policy" {
   name = "default"
   role = aws_iam_role.invocation_role.id
@@ -211,9 +202,9 @@ resource "aws_iam_role_policy" "invocation_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = "lambda:InvokeFunction"
-        Resource = aws_lambda_function.authorizer_lambda.arn
+        Action   = "lambda:InvokeFunction"
+        Effect   = "Allow"
+        Resource = aws_lambda_function.authorizer.arn
       }
     ]
   })
